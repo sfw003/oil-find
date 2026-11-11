@@ -1,0 +1,94 @@
+name: Build App
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    env:
+      CI: "true"
+      OILFIND_FREE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Show Swift toolchain
+        run: swift --version
+      - name: Build Swift app
+        run: swift build
+      - name: Test Swift app
+        run: swift test
+      - name: Check open core boundary
+        run: python3 Tests/Scripts/test_open_core.py
+      - name: Import optional stable signing identity
+        env:
+          MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        run: |
+          if [[ -z "$MACOS_SIGNING_P12" || -z "$MACOS_SIGNING_P12_PASSWORD" ]]; then
+            echo "Signing secrets not configured; using ad-hoc signing."
+            exit 0
+          fi
+          KEYCHAIN_PATH="$RUNNER_TEMP/oilfind-signing.keychain-db"
+          P12_PATH="$RUNNER_TEMP/oilfind-signing.p12"
+          CERT_PATH="$RUNNER_TEMP/oilfind-signing.pem"
+          trap 'rm -f "$P12_PATH" "$CERT_PATH"' EXIT
+          umask 077
+          printf '%s' "$MACOS_SIGNING_P12" | base64 --decode > "$P12_PATH"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$P12_PATH" -k "$KEYCHAIN_PATH" -P "$MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security find-certificate -c "Oil Find Self-Signed" -p "$KEYCHAIN_PATH" > "$CERT_PATH"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k "$KEYCHAIN_PATH" "$CERT_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -q '"Oil Find Self-Signed"'
+      - name: Package app
+        run: |
+          scripts/build-app.sh
+          codesign --verify --deep --strict "build/Oil Find.app"
+          ditto -c -k --sequesterRsrc --keepParent "build/Oil Find.app" build/Oil-Find-macOS.zip
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Oil-Find-macOS
+          path: build/Oil-Find-macOS.zip
+          if-no-files-found: error
+      - name: Clean up signing keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/oilfind-signing.keychain-db"
+          if [[ -f "$KEYCHAIN_PATH" ]]; then
+            security delete-keychain "$KEYCHAIN_PATH"
+          fi
+          rm -f "$RUNNER_TEMP/oilfind-signing.p12" "$RUNNER_TEMP/oilfind-signing.pem"
+
+  prerelease:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: macos-15
+    permissions:
+      contents: write
+    steps:
+      - name: Download app
+        uses: actions/download-artifact@v4
+        with:
+          name: Oil-Find-macOS
+          path: build
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" build/Oil-Find-macOS.zip --verify-tag --prerelease --title "$TAG" --generate-notes
