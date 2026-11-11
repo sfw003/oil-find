@@ -74,7 +74,6 @@ public final class UpdateInstaller {
 
 protocol UpdateCodeSigning {
     func runningDesignatedRequirement() -> SecRequirement?
-    func requirement(from source: String) -> SecRequirement?
     func validate(_ app: URL, against requirement: SecRequirement) -> Bool
 }
 
@@ -86,11 +85,6 @@ struct SystemUpdateCodeSigning: UpdateCodeSigning {
               SecCodeCopyDesignatedRequirement(runningStatic, [], &requirement) == errSecSuccess else { return nil }
         return requirement
     }
-    func requirement(from source: String) -> SecRequirement? {
-        var requirement: SecRequirement?
-        guard SecRequirementCreateWithString(source as CFString, [], &requirement) == errSecSuccess else { return nil }
-        return requirement
-    }
     func validate(_ app: URL, against requirement: SecRequirement) -> Bool {
         var candidate: SecStaticCode?
         guard SecStaticCodeCreateWithPath(app as CFURL, [], &candidate) == errSecSuccess, let candidate else { return false }
@@ -100,14 +94,12 @@ struct SystemUpdateCodeSigning: UpdateCodeSigning {
 }
 
 public final class SystemUpdateSignature: UpdateSignatureValidating {
-    static let developerIDRequirement = "identifier \"com.oiloil.find\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = \"4NZ3X494AF\""
     private let codeSigning: UpdateCodeSigning
     public init() { codeSigning = SystemUpdateCodeSigning() }
     init(codeSigning: UpdateCodeSigning) { self.codeSigning = codeSigning }
     public func validate(_ app: URL) throws {
-        if let running = codeSigning.runningDesignatedRequirement(), codeSigning.validate(app, against: running) { return }
-        guard let developerID = codeSigning.requirement(from: Self.developerIDRequirement),
-              codeSigning.validate(app, against: developerID) else { throw UpdateFailure.signature }
+        guard let running = codeSigning.runningDesignatedRequirement(),
+              codeSigning.validate(app, against: running) else { throw UpdateFailure.signature }
     }
 }
 

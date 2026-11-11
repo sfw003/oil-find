@@ -121,7 +121,7 @@ final class UpdateManager: ObservableObject {
         }
         #endif
     }
-    func openWebsite() { NSWorkspace.shared.open(URL(string: "https://find.oiloil.org")!) }
+    func openWebsite() { NSWorkspace.shared.open(URL(string: "https://github.com/sfw003/oil-find")!) }
     func reportLaunchFailure(_ failure: UpdateFailure) { setState(.failed(failure)); present() }
     private func setState(_ value: UpdateState) { state = value; onChange?() }
     var menuTitle: String {

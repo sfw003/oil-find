@@ -1,7 +1,7 @@
 import Foundation
 
 public final class UpdateClient {
-    public static let latestURL = URL(string: "https://find.oiloil.org/updates/latest-v2.json")!
+    public static let latestURL = URL(string: "https://github.com/sfw003/oil-find/releases/latest/download/latest-v2.json")!
     private let manifestURL: URL
     private let version: String
     private let allowLocalhost: Bool
@@ -18,41 +18,73 @@ public final class UpdateClient {
         return config
     }
     public func check() async throws -> UpdateManifest {
-        guard UpdateManifest.validURL(manifestURL, allowLocalhost: allowLocalhost) else { throw UpdateFailure.other }
-        let session = URLSession(configuration: configuration(), delegate: UpdateNoRedirect(), delegateQueue: nil)
+        guard UpdateURLPolicy.manifest(manifestURL, allowLocalhost: allowLocalhost) else { throw UpdateFailure.other }
+        let session = URLSession(configuration: configuration(), delegate: UpdateRedirects(allowLocalhost: allowLocalhost), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let data: Data, response: URLResponse
         do { (data, response) = try await session.data(from: manifestURL) }
         catch { throw UpdateFailure.network }
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw UpdateFailure.network }
         let manifest = try UpdateManifest.parse(data, allowLocalhost: allowLocalhost)
-        guard manifest.url.host == manifestURL.host else { throw UpdateFailure.other }
+        guard UpdateURLPolicy.asset(manifest.url, allowLocalhost: allowLocalhost) else { throw UpdateFailure.other }
         return manifest
     }
     // The returned directory belongs to the caller and must be removed after use.
     public func download(_ manifest: UpdateManifest, progress: @escaping (Double) -> Void) async throws -> URL {
-        guard UpdateManifest.validURL(manifest.url, allowLocalhost: allowLocalhost) else { throw UpdateFailure.other }
+        guard UpdateURLPolicy.asset(manifest.url, allowLocalhost: allowLocalhost) else { throw UpdateFailure.other }
         return try await withCheckedThrowingContinuation { continuation in
-            let delegate = UpdateDownload(size: manifest.size, progress: progress) { continuation.resume(with: $0) }
+            let delegate = UpdateDownload(size: manifest.size, allowLocalhost: allowLocalhost, progress: progress) { continuation.resume(with: $0) }
             let session = URLSession(configuration: configuration(), delegate: delegate, delegateQueue: nil)
             session.downloadTask(with: manifest.url).resume()
         }
     }
 }
 
-private class UpdateNoRedirect: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(nil)
+enum UpdateURLPolicy {
+    private static let hosts: Set<String> = ["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"]
+    private static let downloadPrefix = "/sfw003/oil-find/releases/download/"
+    private static func localhost(_ url: URL) -> Bool {
+        UpdateManifest.validURL(url, allowLocalhost: true) && ["localhost", "127.0.0.1", "::1"].contains(url.host?.lowercased() ?? "")
+    }
+    private static func github(_ url: URL) -> Bool {
+        UpdateManifest.validURL(url, allowLocalhost: false) && hosts.contains(url.host?.lowercased() ?? "") && (url.port == nil || url.port == 443)
+    }
+    private static func repositoryDownload(_ url: URL) -> Bool {
+        guard github(url), url.host?.lowercased() == "github.com", url.query == nil, url.path.hasPrefix(downloadPrefix) else { return false }
+        let parts = url.path.dropFirst(downloadPrefix.count).split(separator: "/", omittingEmptySubsequences: false)
+        return parts.count == 2 && parts.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+    }
+    static func manifest(_ url: URL, allowLocalhost: Bool) -> Bool {
+        if allowLocalhost && localhost(url) { return true }
+        return url == UpdateClient.latestURL || (repositoryDownload(url) && url.lastPathComponent == "latest-v2.json")
+    }
+    static func asset(_ url: URL, allowLocalhost: Bool) -> Bool {
+        (allowLocalhost && localhost(url)) || (repositoryDownload(url) && url.lastPathComponent.hasSuffix(".zip"))
+    }
+    static func redirect(from source: URL, to target: URL, allowLocalhost: Bool) -> Bool {
+        if github(source) && github(target) { return true }
+        return allowLocalhost && localhost(source) && localhost(target) && source.host == target.host && source.port == target.port
     }
 }
 
-private final class UpdateDownload: UpdateNoRedirect, URLSessionDownloadDelegate {
+private class UpdateRedirects: NSObject, URLSessionTaskDelegate {
+    private let allowLocalhost: Bool
+    init(allowLocalhost: Bool) { self.allowLocalhost = allowLocalhost }
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        guard let source = response.url, let target = request.url,
+              UpdateURLPolicy.redirect(from: source, to: target, allowLocalhost: allowLocalhost) else { completionHandler(nil); return }
+        completionHandler(request)
+    }
+}
+
+private final class UpdateDownload: UpdateRedirects, URLSessionDownloadDelegate {
     private let size: Int64
     private let progress: (Double) -> Void
     private var completion: ((Result<URL, Error>) -> Void)?
     private var failure: UpdateFailure?
-    init(size: Int64, progress: @escaping (Double) -> Void, completion: @escaping (Result<URL, Error>) -> Void) {
+    init(size: Int64, allowLocalhost: Bool, progress: @escaping (Double) -> Void, completion: @escaping (Result<URL, Error>) -> Void) {
         self.size = size; self.progress = progress; self.completion = completion
+        super.init(allowLocalhost: allowLocalhost)
     }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         if totalBytesWritten > size { failure = .integrity; downloadTask.cancel() }

@@ -6,7 +6,7 @@ final class M18Tests: XCTestCase {
     private let current = UpdateVersion("1.2.0", build: 5)!
     private func manifest(version: String = "1.3.0", build: Int = 6, hash: String = String(repeating: "a", count: 64), size: Int64 = 3, minimum: String = "14.0") throws -> UpdateManifest {
         let data = try JSONSerialization.data(withJSONObject: [
-            "version": version, "build": build, "url": "https://find.oiloil.org/downloads/test.zip", "size": size, "sha256": hash,
+            "version": version, "build": build, "url": "https://github.com/sfw003/oil-find/releases/download/v1.3.0/test.zip", "size": size, "sha256": hash,
             "minimumSystemVersion": minimum, "published": "2026-10-04", "notes": ["zh": ["官网新增更新日志。"], "en": ["A changelog is now on the website."]]
         ])
         return try UpdateManifest.parse(data)

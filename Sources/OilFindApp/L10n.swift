@@ -86,7 +86,7 @@ enum L10n {
         "update.downloading": ("正在下载更新… %@", "Downloading Update… %@"),
         "update.installing": ("正在安装…", "Installing…"),
         "update.failed": ("更新没有完成：%@。可以到官网下载新版本。", "The update didn't finish: %@. You can download the new version from the website."),
-        "update.openWebsite": ("打开官网", "Open Website"),
+        "update.openWebsite": ("打开项目页面", "Open Project Page"),
         "update.menuAvailable": ("安装更新 %@…", "Install Update %@…"),
         "update.auto": ("自动检查更新", "Check for Updates Automatically"),
         "update.autoHint": ("每天检查一次，只读取版本信息。", "Checks once a day and only reads version info."),
