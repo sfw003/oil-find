@@ -292,6 +292,12 @@ playground xcarchive dsym rtfd scptd lproj logicx band screenstudio pages number
 `UpdateManager` 在主线程拥有检查、可更新、下载、安装、最新和失败状态；网络与安装不阻塞界面，重复操作在处理中禁用。下载与安装期间禁止提前退出，启动等待进程后才允许正常退出；下载文件在退出前显式清理，不依赖异步任务的 defer。菜单显示可用版本与下载进度，更新窗口复用同一状态，设置通用区域提供自动检查开关、提示、手动检查和当前版本。双语界面文案集中在 `Sources/OilFindApp/L10n.swift`。
 
 
+## 唤起快捷键
+
+原有 Carbon 全局快捷键保持不变。`doubleTapControl` 默认开启，`DoubleTapMonitor` 通过只监听的 session event tap 接收修饰键变化与按键按下，不拦截输入。纯核心 `DoubleTapDetector` 识别 350 ms 内的两次独立 Ctrl 按下，期间有普通按键、其他修饰键或长按则取消；左右 Ctrl 共用聚合状态，三连击不重叠触发。两种方式都复用 `AppDelegate.handleHotKey()`。
+
+双击 Ctrl 需要「输入监控」权限；开启时每次进程最多请求一次，未授权不影响原有快捷键。设置显示授权提示与系统设置入口，应用重新激活时重试监听；录制快捷键期间暂停，关闭开关和退出时释放 event tap。隔离启动验证显式关闭该开关，不向 CI 或测试用户申请全局输入权限。
+
 ## 应用与官网
 
 Oil Find 的公开核心与应用库使用 MIT 许可证，免费搜索始终可用。公开应用库不包含私有产品状态、设备身份或授权网络请求，可选功能通过 ApplicationExtension 接入。旧版授权清理启动时静默尽力执行一次，失败不影响免费功能。

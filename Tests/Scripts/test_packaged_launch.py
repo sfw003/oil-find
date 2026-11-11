@@ -58,7 +58,7 @@ def check_launch(package, developer_id=False, isolated_instance=False):
         command = ["/usr/bin/sandbox-exec", "-f", str(profile), str(app / "Contents/MacOS/OilFind"),
                    "-aiTopicsEnabled", "YES", "-aiTopicsProvider.codex.enabled", "YES",
                    "-aiTopicsProvider.claude.enabled", "NO", "-aiTopicsProvider.workbuddy.enabled", "NO",
-                   "-didFinishOnboarding", "YES", "-automaticUpdates", "NO",
+                   "-didFinishOnboarding", "YES", "-automaticUpdates", "NO", "-doubleTapControl", "NO",
                    "-legacyAuthorizationCleanupCompleted", "YES"]
         with (root / "launch.log").open("w+") as log:
             process = subprocess.Popen(command, env={**os.environ, "CFFIXED_USER_HOME": str(home)},

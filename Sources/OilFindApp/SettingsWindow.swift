@@ -21,6 +21,8 @@ final class SettingsModel: ObservableObject {
     @Published var excludedPaths: [String]
     @Published var keyCode: UInt32
     @Published var modifiers: UInt32
+    @Published var doubleTapControl: Bool
+    @Published var inputMonitoringGranted = false
     @Published var indexDependencyDirs: Bool
     @Published var indexPackageContents: Bool
     @Published var indexUserLibrary: Bool
@@ -43,6 +45,7 @@ final class SettingsModel: ObservableObject {
     var onPinyinChange: (() -> Void)?
     var suspendHotKey: (() -> Void)?
     var registerHotKey: ((UInt32, UInt32) -> Bool)?
+    var onDoubleTapControlChange: (() -> Void)?
     var onContentChange: (() -> Void)?
     private let snapshotStore: IndexStore?
     private var keyMonitor: Any?
@@ -68,6 +71,7 @@ final class SettingsModel: ObservableObject {
         excludedPaths = snapshot ? [] : ExcludedFolders.adding(defaults.stringArray(forKey: "userExcludedPaths") ?? [], to: [])
         keyCode = snapshot ? Shortcut.defaultKeyCode : UInt32(clamping: defaults.integer(forKey: "hotKeyCode"))
         modifiers = snapshot ? Shortcut.defaultModifiers : UInt32(clamping: defaults.integer(forKey: "hotKeyModifiers"))
+        doubleTapControl = snapshot ? true : (preferences.object(forKey: "doubleTapControl") as? Bool ?? true)
         self.snapshotStore = snapshotStore
         languageObserver = NotificationCenter.default.addObserver(forName: L10n.changed, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
@@ -93,6 +97,7 @@ final class SettingsModel: ObservableObject {
         let wasGranted = granted
         if !snapshot { launchAtLogin = SMAppService.mainApp.status == .enabled }
         granted = snapshot ? false : Permissions.hasFullDiskAccess()
+        inputMonitoringGranted = !snapshot && DoubleTapMonitor.hasPermission
         rebuilding = manager?.isRescanning == true || manager?.state == .scanning || manager?.state == .loading
         var stats = CoverageStats()
         if let store = snapshotStore ?? manager?.store {
@@ -151,6 +156,10 @@ final class SettingsModel: ObservableObject {
         previewWithSpace = enabled
         preferences.set(enabled, forKey: "previewWithSpace")
     }
+    func setDoubleTapControl(_ enabled: Bool) {
+        doubleTapControl = enabled; preferences.set(enabled, forKey: "doubleTapControl")
+        onDoubleTapControlChange?(); refresh()
+    }
     func commitExcludedExtensions() {
         excludedExtensionsText = SettingsPreferences.setExcludedExtensions(excludedExtensionsText, in: preferences)
     }
@@ -196,6 +205,7 @@ final class SettingsModel: ObservableObject {
     }
     private func endRecording() {
         recording = false
+        onDoubleTapControlChange?()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor); self.keyMonitor = nil }
         onContentChange?()
     }
@@ -297,6 +307,13 @@ private struct SettingsForm: View {
                         ShortcutRecorder(model: model).frame(width: 120, height: 24)
                     }
                     if let error = model.shortcutError { hint(error).foregroundStyle(.red) }
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    Toggle(L10n.text("settings.doubleTapControl"), isOn: Binding(get: { model.doubleTapControl }, set: model.setDoubleTapControl))
+                    if model.doubleTapControl && !model.inputMonitoringGranted {
+                        hint(L10n.text("settings.inputMonitoringHint"))
+                        Button(L10n.text("settings.inputMonitoringOpen")) { DoubleTapMonitor.openSettings() }
+                    }
                 }
                 VStack(alignment: .leading, spacing: 5) {
                     Toggle(L10n.text("settings.pinyin"), isOn: Binding(get: { model.pinyinEnabled }, set: model.setPinyin))

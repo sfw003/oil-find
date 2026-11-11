@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var localizedMenuItems: [(String, NSMenuItem)] = []
     private var languageObserver: NSObjectProtocol?
     private var hotKey: HotKey?
+    private lazy var doubleTapMonitor = DoubleTapMonitor { [weak self] in self?.handleHotKey() }
     private var manager: IndexManager?
     private var settingsController: SettingsWindowController?
     private var updateItem: NSMenuItem?, checkUpdateItem: NSMenuItem?, quitItem: NSMenuItem?
@@ -89,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let limited = self.welcomeState?.permissionDetected(granted) { self.startIndex(limited: limited) }
             }
         }
+        updateDoubleTapMonitor()
         if let limited = indexRequest { startIndex(limited: limited) }
         if let failure = SystemUpdateFiles().cleanupAfterLaunch(application: Bundle.main.bundleURL, current: UpdateManager.current) {
             UpdateManager.shared.reportLaunchFailure(failure)
@@ -111,6 +113,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if welcomeState?.isShowing == true { finishWelcome(source: .hotkey) }
         else { panel.toggle(source: .hotkey) }
     }
+
+    private func updateDoubleTapMonitor(requestPermission: Bool = true) {
+        guard !secondaryInstance else { return }
+        if UserDefaults.standard.bool(forKey: "doubleTapControl"), settingsController?.model.recording != true {
+            doubleTapMonitor.start(requestPermission: requestPermission)
+        } else { doubleTapMonitor.stop() }
+    }
+    func applicationDidBecomeActive(_ notification: Notification) { updateDoubleTapMonitor(requestPermission: false) }
 
     private func startIndex(limited: Bool) {
         guard manager == nil else { return }
@@ -198,8 +208,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         if settingsController == nil {
             let model = SettingsModel(topics: topics); model.manager = manager
-            model.suspendHotKey = { [weak self] in self?.hotKey?.unregister(); self?.hotKey = nil }
+            model.suspendHotKey = { [weak self] in self?.hotKey?.unregister(); self?.hotKey = nil; self?.doubleTapMonitor.stop() }
             model.registerHotKey = { [weak self] code, mask in self?.registerHotKey(keyCode: code, modifiers: mask) ?? false }
+            model.onDoubleTapControlChange = { [weak self] in self?.updateDoubleTapMonitor() }
             model.onConfigChange = { [weak self] in
                 guard let self else { return }
                 self.manager?.updateConfig(SettingsPreferences.indexConfig(limited: self.limited))
@@ -273,6 +284,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls { appExtension?.handle(url) }
     }
-    func applicationWillTerminate(_ notification: Notification) { if !secondaryInstance { topics.stop(); appExtension?.stop(); externalDrives.stop(); UpdateManager.shared.stop() }; settingsController?.model.stopRefreshing(); permissionTimer?.invalidate(); hotKey?.unregister(); manager?.stop() }
+    func applicationWillTerminate(_ notification: Notification) { if !secondaryInstance { topics.stop(); appExtension?.stop(); externalDrives.stop(); UpdateManager.shared.stop() }; settingsController?.model.stopRefreshing(); permissionTimer?.invalidate(); hotKey?.unregister(); doubleTapMonitor.stop(); manager?.stop() }
     deinit { if let languageObserver { NotificationCenter.default.removeObserver(languageObserver) } }
 }
