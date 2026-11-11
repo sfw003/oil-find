@@ -277,13 +277,15 @@ playground xcarchive dsym rtfd scptd lproj logicx band screenstudio pages number
 
 ## 更新
 
+本 fork 的独立发版、固定证书与 GitHub 更新源见 [FORK.md](FORK.md)；下述安装校验与回滚机制保持不变。
+
 发布说明唯一来源为 `site/content/releases.ts`，版本倒序排列，官网 `/changelog` 与 `/en/changelog` 直接读取。更新清单由打包流程从 zip 的实际大小、SHA-256 与当前发布说明生成；缺少说明或对应签名身份时失败。旧 `latest.json` 只向旧客户端提供自签桥接版，桥接及后续版本使用 `latest-v2.json`。两份清单均为静态 HTTPS 资源，`Cache-Control: no-cache`，zip 沿用下载目录缓存。应用不使用 Sparkle 或第三方更新包。
 
 `OilFindCore/Update` 提供语义版本、清单、偏好、网络、安装与重启类型。版本遵守 SemVer，预发布版本低于正式版，忽略版本元数据；仅语义版本相同时比较 build。最低系统要求高于当前系统时不提示。`automaticUpdates` 默认为 true；启动 30 秒后检查一次，随后每 24 小时检查。`skippedUpdateVersion` 仅阻止该版本的自动提示，不影响手动检查。网络失败自动检查静默，手动检查报告原因。
 
-版本检查只有一个 GET 请求，使用临时 URLSession，禁用缓存、cookie 和凭证，不携带设备标识、语言或本机路径；User-Agent 为 `OilFind/<版本>`。桥接及后续正式应用的清单地址固定为 `https://find.oiloil.org/updates/latest-v2.json`，旧版继续使用 `latest.json`；仅接受 HTTPS 下载与清单同一主机的 zip，不跟随重定向。调试版不执行更新检查；快照与临时目录端到端演练入口仅在 DEBUG 编译，正式版没有清单地址覆盖入口。
+版本检查只有一个 GET 请求，使用临时 URLSession，禁用缓存、cookie 和凭证，不携带设备标识、语言或本机路径；User-Agent 为 `OilFind/<版本>`。本 fork 正式应用的清单地址固定为 `https://github.com/sfw003/oil-find/releases/latest/download/latest-v2.json`；zip 必须来自该仓库的 `releases/download` 路径，仅跟随明确列出的 GitHub HTTPS 主机重定向。调试版不执行更新检查；快照与临时目录端到端演练入口仅在 DEBUG 编译，正式版没有清单地址覆盖入口。
 
-用户确认安装后，URLSession 下载到临时目录并报告进度；流式校验大小与 SHA-256。在当前应用旁建立同卷、0700 权限的临时工作目录，检查压缩包路径与符号链接后用 `ditto -x -k` 解压。Security 从 `SecCodeCopySelf` 取得当前运行代码，再取得其 designated requirement；新包必须签名有效且满足该要求，或满足固定为 bundle id `com.oiloil.find`、Team ID `4NZ3X494AF` 的 Apple Developer ID requirement。两条路径都使用严格、全架构与嵌套代码校验。Info.plist 的 bundle id 必须为 `com.oiloil.find`，版本高于当前并与清单一致。
+用户确认安装后，URLSession 下载到临时目录并报告进度；流式校验大小与 SHA-256。在当前应用旁建立同卷、0700 权限的临时工作目录，检查压缩包路径与符号链接后用 `ditto -x -k` 解压。Security 从 `SecCodeCopySelf` 取得当前运行代码，再取得其 designated requirement；新包必须签名有效且满足该要求，不再接受上游 Developer ID 回退。校验使用严格、全架构与嵌套代码选项。Info.plist 的 bundle id 必须为 `com.oiloil.find`，版本高于当前并与清单一致。
 
 安装先记录收据，移动当前应用到工作目录的 `previous.app`，再把新应用移到原位置。第二次移动失败立即还原备份；如果还原本身发生文件系统错误，则保留备份，不删除工作目录。当前应用或所在目录不可写时停止，不尝试提权。文件操作与签名校验通过协议注入，所有校验发生在替换之前。
 

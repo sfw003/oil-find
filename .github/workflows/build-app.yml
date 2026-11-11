@@ -22,20 +22,38 @@ jobs:
           persist-credentials: false
       - name: Show Swift toolchain
         run: swift --version
+      - name: Prepare fork build metadata
+        run: |
+          ARGS=(--run-number "$GITHUB_RUN_NUMBER")
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            ARGS+=(--tag "$GITHUB_REF_NAME")
+          fi
+          python3 scripts/fork-release.py prepare "${ARGS[@]}"
+      - name: Test fork release scripts
+        run: python3 Tests/Scripts/test_fork_release.py
       - name: Build Swift app
         run: swift build
       - name: Test Swift app
         run: swift test
       - name: Check open core boundary
         run: python3 Tests/Scripts/test_open_core.py
-      - name: Import optional stable signing identity
+      - name: Import stable signing identity
+        id: signing
         env:
           MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
           MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
         run: |
-          if [[ -z "$MACOS_SIGNING_P12" || -z "$MACOS_SIGNING_P12_PASSWORD" ]]; then
+          if [[ -z "$MACOS_SIGNING_P12" && -z "$MACOS_SIGNING_P12_PASSWORD" ]]; then
+            if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+              echo "::error::Release tags require the stable signing certificate."
+              exit 1
+            fi
             echo "Signing secrets not configured; using ad-hoc signing."
             exit 0
+          fi
+          if [[ -z "$MACOS_SIGNING_P12" || -z "$MACOS_SIGNING_P12_PASSWORD" ]]; then
+            echo "::error::Both signing secrets must be configured."
+            exit 1
           fi
           KEYCHAIN_PATH="$RUNNER_TEMP/oilfind-signing.keychain-db"
           P12_PATH="$RUNNER_TEMP/oilfind-signing.p12"
@@ -54,16 +72,48 @@ jobs:
           security find-certificate -c "Oil Find Self-Signed" -p "$KEYCHAIN_PATH" > "$CERT_PATH"
           sudo security add-trusted-cert -d -r trustRoot -p codeSign -k "$KEYCHAIN_PATH" "$CERT_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -q '"Oil Find Self-Signed"'
+          echo "stable=true" >> "$GITHUB_OUTPUT"
+      - name: Test same-certificate update validation
+        if: steps.signing.outputs.stable == 'true'
+        env:
+          OILFIND_TEST_SELF_SIGNED_IDENTITY: Oil Find Self-Signed
+        run: swift test --filter UpdateSignatureIntegrationTests
       - name: Package app
+        env:
+          STABLE_SIGNING: ${{ steps.signing.outputs.stable }}
         run: |
           scripts/build-app.sh
           codesign --verify --deep --strict "build/Oil Find.app"
+          codesign -dvv "build/Oil Find.app" 2>&1 | tee build/signature.txt
+          codesign -d -r- "build/Oil Find.app" 2>&1
+          if [[ "$STABLE_SIGNING" == true || "$GITHUB_REF_TYPE" == tag ]]; then
+            grep -q '^Authority=Oil Find Self-Signed$' build/signature.txt
+          fi
           ditto -c -k --sequesterRsrc --keepParent "build/Oil Find.app" build/Oil-Find-macOS.zip
+      - name: Generate and validate fork update manifest
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then
+            VERSION="$(python3 -c 'import plistlib; print(plistlib.load(open("Resources/Info.plist", "rb"))["CFBundleShortVersionString"])')"
+            TAG="v${VERSION}+sfw.${GITHUB_RUN_NUMBER}"
+            if [[ "$VERSION" == *+* ]]; then TAG="v${VERSION}"; fi
+          fi
+          git log -1 --format=%s > build/release-notes.txt
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            git for-each-ref --format='%(contents)' "refs/tags/$GITHUB_REF_NAME" > build/release-notes.txt
+          fi
+          python3 scripts/fork-release.py manifest --plist "build/Oil Find.app/Contents/Info.plist" \
+            --archive build/Oil-Find-macOS.zip --tag "$TAG" --notes-file build/release-notes.txt --output build/latest-v2.json
+          OILFIND_TEST_GENERATED_MANIFEST="$PWD/build/latest-v2.json" \
+            OILFIND_TEST_GENERATED_APP="$PWD/build/Oil Find.app" swift test --filter ForkReleaseManifestTests
       - name: Upload app
         uses: actions/upload-artifact@v4
         with:
           name: Oil-Find-macOS
-          path: build/Oil-Find-macOS.zip
+          path: |
+            build/Oil-Find-macOS.zip
+            build/latest-v2.json
+            build/signature.txt
           if-no-files-found: error
       - name: Clean up signing keychain
         if: always()
@@ -74,7 +124,7 @@ jobs:
           fi
           rm -f "$RUNNER_TEMP/oilfind-signing.p12" "$RUNNER_TEMP/oilfind-signing.pem"
 
-  prerelease:
+  release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: macos-15
@@ -86,9 +136,9 @@ jobs:
         with:
           name: Oil-Find-macOS
           path: build
-      - name: Publish prerelease
+      - name: Publish stable release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" build/Oil-Find-macOS.zip --verify-tag --prerelease --title "$TAG" --generate-notes
+        run: gh release create "$TAG" build/Oil-Find-macOS.zip build/latest-v2.json --verify-tag --latest --title "$TAG" --generate-notes
