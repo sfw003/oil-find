@@ -100,7 +100,13 @@ final class DoubleTapDetectorTests: XCTestCase {
     func testPreferenceDefaultsOnAndPreservesOptOut() throws {
         let suite = "OilFindDoubleTap-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        // The registration domain is shared across suites in this process.
+        let registration = defaults.volatileDomain(forName: UserDefaults.registrationDomain)
+        defer {
+            defaults.removeVolatileDomain(forName: UserDefaults.registrationDomain)
+            defaults.setVolatileDomain(registration, forName: UserDefaults.registrationDomain)
+            defaults.removePersistentDomain(forName: suite)
+        }
         SettingsPreferences.register(in: defaults)
         XCTAssertTrue(defaults.bool(forKey: "doubleTapControl"))
         defaults.set(false, forKey: "doubleTapControl")
